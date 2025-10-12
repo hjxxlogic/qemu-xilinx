@@ -71,8 +71,6 @@ jobs:
 
       - name: Configure QEMU
         run: |
-          export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
-          export PKG_CONFIG_LIBMOUNT_STATIC=false
           ./configure \
             --target-list=arm-softmmu,aarch64-softmmu \
             --enable-system \
