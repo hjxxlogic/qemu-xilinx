@@ -16,9 +16,10 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout QEMU Repository
         uses: actions/checkout@v4
-
+        with:
+          submodules: recursive
 
       - name: Install Dependencies
         run: |
@@ -34,20 +35,78 @@ jobs:
             ninja-build \
             python3 \
             python3-pip \
+            libsystemc-dev \
+            libbz2-dev \
+            libzstd-dev \
+            libpng-dev \
+            libjpeg-dev \
+            libselinux1-dev \
+            libncurses-dev \
+            libgcrypt20-dev \
             libmount-dev \
-            libsystemc-dev
+            wget
+
+      - name: Verify libmount Static Library
+        run: |
+          find /usr/lib -name libmount.a || echo "libmount.a not found"
+          pkg-config --libs --static libmount || echo "pkg-config libmount failed"
+
+      - name: Build util-linux (Fallback if libmount.a Missing)
+        run: |
+          if [ ! -f /usr/lib/x86_64-linux-gnu/libmount.a ]; then
+            wget https://github.com/util-linux/util-linux/archive/refs/tags/v2.38.tar.gz
+            tar -xzf v2.38.tar.gz
+            cd util-linux-2.38
+            ./configure --prefix=/usr/local --enable-static
+            make -j$(nproc)
+            sudo make install
+            cd ..
+          fi
+        continue-on-error: true
+
+      - name: Install SystemC (Optional for libsystemctlm-soc)
+        run: |
+          wget https://www.accellera.org/images/downloads/standards/systemc/systemc-2.3.3.tar.gz
+          tar -xzf systemc-2.3.3.tar.gz
+          cd systemc-2.3.3
+          mkdir build
+          cd build
+          ../configure --prefix=/usr/local
+          make -j$(nproc)
+          sudo make install
+          cd ../..
+
+      - name: Clone and Build libsystemctlm-soc
+        run: |
+          git clone https://github.com/Xilinx/libsystemctlm-soc.git
+          cd libsystemctlm-soc
+          git submodule update --init
+          make SYSTEMC=/usr/local
+          sudo make install
+          cd ..
 
       - name: Configure QEMU
         run: |
+          export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
+          export PKG_CONFIG_LIBMOUNT_STATIC=false
           ./configure \
             --target-list=arm-softmmu,aarch64-softmmu \
             --enable-system \
-            --static  \
+            --static \
             --enable-trace-backends=simple \
-            --prefix=$PWD/install
+            --enable-vnc \
+            --enable-curses \
+            --enable-libgcrypt \
+            --enable-zstd \
+            --enable-bzip2 \
+            --enable-png \
+            --enable-vnc-jpeg \
+            --enable-virtfs \
+            --prefix=$PWD/install \
+            || { cat config.log; exit 1; }
         env:
-          CFLAGS: -O2
-          CXXFLAGS: -O2
+          CFLAGS: -O2 -g
+          LDFLAGS: -O2 -Wl,-z,relro -Wl,-z,now -Wl,--warn-common
 
       - name: Build QEMU
         run: make -j$(nproc)
@@ -55,10 +114,13 @@ jobs:
       - name: Install QEMU
         run: make install
 
-      - name: Verify Remote-Port Support
+      - name: Verify Remote-Port and VirtFS Support
         run: |
           ./install/bin/qemu-system-arm -device help | grep remote-port || exit 1
           ./install/bin/qemu-system-aarch64 -device help | grep remote-port || exit 1
+          ./install/bin/qemu-system-arm -device help | grep virtio-9p || exit 1
+          ./install/bin/qemu-system-aarch64 -version
+          ./install/bin/qemu-system-arm -version
 
       - name: Package Artifacts
         run: |
