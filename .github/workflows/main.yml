@@ -19,7 +19,6 @@ jobs:
       - name: Checkout QEMU Repository
         uses: actions/checkout@v4
 
-
       - name: Install Dependencies
         run: |
           sudo apt-get update
@@ -43,6 +42,10 @@ jobs:
             libncurses-dev \
             libgcrypt20-dev \
             libmount-dev \
+            libblkid-dev \
+            libuuid-dev \
+            autoconf \
+            automake \
             wget
 
       - name: Verify libmount Static Library
@@ -56,6 +59,9 @@ jobs:
             wget https://github.com/util-linux/util-linux/archive/refs/tags/v2.38.tar.gz
             tar -xzf v2.38.tar.gz
             cd util-linux-2.38
+            if [ ! -f configure ]; then
+              ./autogen.sh || { echo "autogen.sh failed"; exit 1; }
+            fi
             ./configure --prefix=/usr/local --enable-static
             make -j$(nproc)
             sudo make install
@@ -63,26 +69,7 @@ jobs:
           fi
         continue-on-error: true
 
-      - name: Install SystemC (Optional for libsystemctlm-soc)
-        run: |
-          wget https://www.accellera.org/images/downloads/standards/systemc/systemc-2.3.3.tar.gz
-          tar -xzf systemc-2.3.3.tar.gz
-          cd systemc-2.3.3
-          mkdir build
-          cd build
-          ../configure --prefix=/usr/local
-          make -j$(nproc)
-          sudo make install
-          cd ../..
-
-      - name: Clone and Build libsystemctlm-soc
-        run: |
-          git clone https://github.com/Xilinx/libsystemctlm-soc.git
-          cd libsystemctlm-soc
-          git submodule update --init
-          make SYSTEMC=/usr/local
-          sudo make install
-          cd ..
+    
 
       - name: Configure QEMU
         run: |
@@ -91,7 +78,6 @@ jobs:
           ./configure \
             --target-list=arm-softmmu,aarch64-softmmu \
             --enable-system \
-            --static \
             --enable-trace-backends=simple \
             --enable-vnc \
             --enable-curses \
@@ -102,6 +88,7 @@ jobs:
             --enable-vnc-jpeg \
             --enable-virtfs \
             --prefix=$PWD/install \
+            --static \
             || { cat config.log; exit 1; }
         env:
           CFLAGS: -O2 -g
