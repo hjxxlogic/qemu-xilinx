@@ -46,6 +46,7 @@ jobs:
             autoconf \
             automake \
             gettext \
+            autopoint \
             wget
 
 
