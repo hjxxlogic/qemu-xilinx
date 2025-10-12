@@ -1,0 +1,71 @@
+name: Build QEMU with Remote-Port Support
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+    branches:
+      - master
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git \
+            build-essential \
+            pkg-config \
+            libglib2.0-dev \
+            libpixman-1-dev \
+            zlib1g-dev \
+            libfdt-dev \
+            ninja-build \
+            python3 \
+            python3-pip \
+            libsystemc-dev
+
+      - name: Configure QEMU
+        run: |
+          ./configure \
+            --target-list=arm-softmmu,aarch64-softmmu \
+            --enable-system \
+            --enable-trace-backends=simple \
+            --prefix=$PWD/install
+        env:
+          CFLAGS: -O2
+          CXXFLAGS: -O2
+
+      - name: Build QEMU
+        run: make -j$(nproc)
+
+      - name: Install QEMU
+        run: make install
+
+      - name: Verify Remote-Port Support
+        run: |
+          ./install/bin/qemu-system-arm -device help | grep remote-port || exit 1
+          ./install/bin/qemu-system-aarch64 -device help | grep remote-port || exit 1
+
+      - name: Package Artifacts
+        run: |
+          tar -czf qemu-binaries.tar.gz -C install/bin qemu-system-arm qemu-system-aarch64
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-binaries
+          path: qemu-binaries.tar.gz
+          retention-days: 7
