@@ -43,7 +43,6 @@ jobs:
             libgcrypt20-dev \
             libmount-dev \
             libblkid-dev \
-            libuuid-dev \
             autoconf \
             automake \
             wget
