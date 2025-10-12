@@ -45,12 +45,10 @@ jobs:
             libblkid-dev \
             autoconf \
             automake \
+            gettext \
             wget
 
-      - name: Verify libmount Static Library
-        run: |
-          find /usr/lib -name libmount.a || echo "libmount.a not found"
-          pkg-config --libs --static libmount || echo "pkg-config libmount failed"
+
 
       - name: Build util-linux (Fallback if libmount.a Missing)
         run: |
