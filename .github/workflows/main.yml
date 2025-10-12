@@ -74,15 +74,6 @@ jobs:
           ./configure \
             --target-list=arm-softmmu,aarch64-softmmu \
             --enable-system \
-            --enable-trace-backends=simple \
-            --enable-vnc \
-            --enable-curses \
-            --enable-libgcrypt \
-            --enable-zstd \
-            --enable-bzip2 \
-            --enable-png \
-            --enable-vnc-jpeg \
-            --enable-virtfs \
             --prefix=$PWD/install \
             --static \
             || { cat config.log; exit 1; }
