@@ -41,6 +41,7 @@ jobs:
           ./configure \
             --target-list=arm-softmmu,aarch64-softmmu \
             --enable-system \
+            --static  \
             --enable-trace-backends=simple \
             --prefix=$PWD/install
         env:
