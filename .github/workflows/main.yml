@@ -72,7 +72,7 @@ jobs:
       - name: Configure QEMU
         run: |
           ./configure \
-            --target-list=arm-softmmu,aarch64-softmmu \
+            --target-list=arm-softmmu,aarch64-softmmu,x86_64-softmmu \
             --enable-system \
             --prefix=$PWD/install \
             --static \
