@@ -47,6 +47,7 @@ jobs:
             automake \
             gettext \
             autopoint \
+            squashfs-tools \
             wget
 
 
@@ -97,11 +98,11 @@ jobs:
 
       - name: Package Artifacts
         run: |
-          tar -czf qemu-binaries.tar.gz install
+          cd install && mksquashfs . ../qemu.sfs
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: qemu-binaries
-          path: qemu-binaries.tar.gz
+          name: qemu-sfs
+          path: qemu.sfs
           retention-days: 7
