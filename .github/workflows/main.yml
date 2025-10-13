@@ -97,7 +97,7 @@ jobs:
 
       - name: Package Artifacts
         run: |
-          tar -czf qemu-binaries.tar.gz -C install/bin qemu-system-*
+          tar -czf qemu-binaries.tar.gz install
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
