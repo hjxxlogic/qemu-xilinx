@@ -75,6 +75,7 @@ jobs:
           ./configure \
             --target-list=arm-softmmu,aarch64-softmmu,x86_64-softmmu \
             --enable-system \
+            --extra-cflags="-DREMOTE_PORT_ERR_DEBUG=1"
             --prefix=$PWD/install \
             --static \
             || { cat config.log; exit 1; }
@@ -106,3 +107,4 @@ jobs:
           name: qemu-sfs
           path: qemu.sfs
           retention-days: 7
+      
