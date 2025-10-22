@@ -7,6 +7,7 @@
 #include "qemu/log.h"
 #include "qemu/thread.h"
 #include "hw/core/cpu.h"
+#include "sysemu/memory_watch.h"
 #include <sys/socket.h>
 #include <sys/un.h>
 
