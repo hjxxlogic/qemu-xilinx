@@ -19,6 +19,16 @@ jobs:
       - name: Checkout QEMU Repository
         uses: actions/checkout@v4
 
+      # Cache APT packages
+      - name: Cache APT packages
+        uses: actions/cache@v3
+        with:
+          path: |
+            /var/cache/apt/archives
+          key: ${{ runner.os }}-apt-${{ hashFiles('.github/workflows/main.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-apt-
+
       - name: Install Dependencies
         run: |
           sudo apt-get update
@@ -50,9 +60,22 @@ jobs:
             squashfs-tools \
             wget
 
-
+      # Cache util-linux build
+      - name: Cache util-linux
+        id: cache-util-linux
+        uses: actions/cache@v3
+        with:
+          path: |
+            /usr/local/lib/libmount.a
+            /usr/local/lib/libblkid.a
+            /usr/local/include/libmount
+            /usr/local/include/blkid
+          key: ${{ runner.os }}-util-linux-2.38
+          restore-keys: |
+            ${{ runner.os }}-util-linux-
 
       - name: Build util-linux (Fallback if libmount.a Missing)
+        if: steps.cache-util-linux.outputs.cache-hit != 'true'
         run: |
           if [ ! -f /usr/lib/x86_64-linux-gnu/libmount.a ]; then
             wget https://github.com/util-linux/util-linux/archive/refs/tags/v2.38.tar.gz
@@ -68,7 +91,17 @@ jobs:
           fi
         continue-on-error: true
 
-    
+      # Cache QEMU build objects
+      - name: Cache QEMU build
+        uses: actions/cache@v3
+        with:
+          path: |
+            build
+            .ninja_deps
+            .ninja_log
+          key: ${{ runner.os }}-qemu-build-${{ hashFiles('**/*.c', '**/*.h', 'meson.build', 'configure') }}
+          restore-keys: |
+            ${{ runner.os }}-qemu-build-
 
       - name: Configure QEMU
         run: |
