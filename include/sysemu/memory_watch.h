@@ -9,6 +9,8 @@
 #include "exec/hwaddr.h"
 
 void memory_watch_init(void);
+void memory_watch_set_enabled(bool enabled);
+bool memory_watch_is_enabled(void);
 void memory_watch_check_access(CPUState *cpu, hwaddr paddr,
                                unsigned size, bool is_write);
 void memory_watch_cleanup(void);

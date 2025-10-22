@@ -48,6 +48,7 @@
 #include "qemu/memalign.h"
 #include "exec/memory.h"
 #include "exec/ioport.h"
+#include "sysemu/memory_watch.h"
 #include "sysemu/dma.h"
 #include "sysemu/hostmem.h"
 #include "sysemu/hw_accel.h"
@@ -3034,6 +3035,9 @@ MemTxResult address_space_read_full(AddressSpace *as, hwaddr addr,
         RCU_READ_LOCK_GUARD();
         fv = address_space_to_flatview(as);
         result = flatview_read(fv, addr, attrs, buf, len);
+        
+        // Check for memory watch
+        memory_watch_check_access(current_cpu, addr, len, false);
     }
 
     return result;
@@ -3050,6 +3054,9 @@ MemTxResult address_space_write(AddressSpace *as, hwaddr addr,
         RCU_READ_LOCK_GUARD();
         fv = address_space_to_flatview(as);
         result = flatview_write(fv, addr, attrs, buf, len);
+        
+        // Check for memory watch
+        memory_watch_check_access(current_cpu, addr, len, true);
     }
 
     return result;

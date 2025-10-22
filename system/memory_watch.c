@@ -20,6 +20,7 @@ static GHashTable *watched_addresses = NULL;
 static QemuMutex watch_lock;
 static uint64_t access_count = 0;
 static bool initialized = false;
+static bool enabled = false;
 
 typedef struct {
     uint64_t start;
@@ -135,10 +136,25 @@ static void check_socket_data(void)
     }
 }
 
+void memory_watch_set_enabled(bool enable)
+{
+    enabled = enable;
+    if (enable) {
+        fprintf(stderr, "[Memory Watch] Enabled\n");
+    } else {
+        fprintf(stderr, "[Memory Watch] Disabled\n");
+    }
+}
+
+bool memory_watch_is_enabled(void)
+{
+    return enabled;
+}
+
 void memory_watch_check_access(CPUState *cpu, hwaddr paddr, 
                                unsigned size, bool is_write)
 {
-    if (!initialized || !watched_addresses) {
+    if (!initialized || !watched_addresses || !enabled) {
         return;
     }
     
@@ -177,13 +193,24 @@ void memory_watch_init(void)
         return;
     }
     
+    // 检查环境变量ENABLE_MEMORY_WATCH
+    const char *env_enable = getenv("ENABLE_MEMORY_WATCH");
+    if (env_enable && (strcmp(env_enable, "1") == 0 || strcmp(env_enable, "yes") == 0)) {
+        enabled = true;
+        fprintf(stderr, "[Memory Watch] Enabled via ENABLE_MEMORY_WATCH\n");
+    } else {
+        enabled = false;
+        fprintf(stderr, "[Memory Watch] Disabled (set ENABLE_MEMORY_WATCH=1 to enable)\n");
+    }
+    
     log_file = fopen(LOG_PATH, "w");
     if (!log_file) {
         return;
     }
     
     fprintf(log_file, "# QEMU Memory Watch (Integrated)\n");
-    fprintf(log_file, "# Format: [TIMESTAMP] CPU OP ADDR SIZE TYPE SLOT\n\n");
+    fprintf(log_file, "# Format: [TIMESTAMP] CPU OP ADDR SIZE TYPE SLOT\n");
+    fprintf(log_file, "# Enabled: %s\n\n", enabled ? "yes" : "no");
     
     qemu_mutex_init(&watch_lock);
     watched_addresses = g_hash_table_new_full(g_direct_hash, g_direct_equal,

@@ -3809,6 +3809,7 @@ void qemu_init(int argc, char **argv)
     }
 
     /* Initialize memory watch for xHCI context monitoring */
+    /* Enable with environment variable: ENABLE_MEMORY_WATCH=1 */
     memory_watch_init();
 
     resume_mux_open();
