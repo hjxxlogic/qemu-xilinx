@@ -1,0 +1,21 @@
+Add integrated memory watch for xHCI context monitoring
+
+This commit integrates memory watch functionality directly into QEMU
+without using the plugin API. The feature monitors Windows access to
+xHCI device contexts by communicating with RTL simulation via Unix socket.
+
+Changes:
+- Add system/memory_watch.c: Core implementation
+- Add include/sysemu/memory_watch.h: API header
+- Modify system/vl.c: Initialize memory watch on startup
+- Modify system/runstate.c: Cleanup on exit
+- Modify system/meson.build: Add to build system
+
+Features:
+- Unix socket communication with RTL (/tmp/xhci_context_monitor.sock)
+- Receives WATCH commands from RTL
+- Monitors physical memory access
+- Logs to /tmp/qemu_memory_watch.log
+- Minimal performance impact
+
+No plugin support required. Works out of the box.
