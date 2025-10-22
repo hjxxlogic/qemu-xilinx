@@ -3035,8 +3035,16 @@ MemTxResult address_space_read_full(AddressSpace *as, hwaddr addr,
         RCU_READ_LOCK_GUARD();
         fv = address_space_to_flatview(as);
         result = flatview_read(fv, addr, attrs, buf, len);
-        
-        // Check for memory watch
+    }
+    
+    // Check for memory watch (outside RCU lock to avoid deadlock)
+    // Only call if enabled to minimize performance impact
+    if (len > 0 && memory_watch_is_enabled()) {
+        static uint64_t call_count = 0;
+        if ((call_count++ % 100000) == 0) {
+            fprintf(stderr, "[PHYSMEM_DEBUG] read: addr=0x%lx len=%ld count=%lu\n", 
+                    (unsigned long)addr, (long)len, (unsigned long)call_count);
+        }
         memory_watch_check_access(current_cpu, addr, len, false);
     }
 
@@ -3054,8 +3062,16 @@ MemTxResult address_space_write(AddressSpace *as, hwaddr addr,
         RCU_READ_LOCK_GUARD();
         fv = address_space_to_flatview(as);
         result = flatview_write(fv, addr, attrs, buf, len);
-        
-        // Check for memory watch
+    }
+    
+    // Check for memory watch (outside RCU lock to avoid deadlock)
+    // Only call if enabled to minimize performance impact
+    if (len > 0 && memory_watch_is_enabled()) {
+        static uint64_t call_count = 0;
+        if ((call_count++ % 100000) == 0) {
+            fprintf(stderr, "[PHYSMEM_DEBUG] write: addr=0x%lx len=%ld count=%lu\n", 
+                    (unsigned long)addr, (long)len, (unsigned long)call_count);
+        }
         memory_watch_check_access(current_cpu, addr, len, true);
     }
 

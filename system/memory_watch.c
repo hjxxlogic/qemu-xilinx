@@ -20,7 +20,7 @@ static GHashTable *watched_addresses = NULL;
 static QemuMutex watch_lock;
 static uint64_t access_count = 0;
 static bool initialized = false;
-static bool enabled = false;
+static volatile bool enabled = false;  // volatile for lock-free read
 
 typedef struct {
     uint64_t start;
@@ -154,8 +154,16 @@ bool memory_watch_is_enabled(void)
 void memory_watch_check_access(CPUState *cpu, hwaddr paddr, 
                                unsigned size, bool is_write)
 {
+    static uint64_t total_calls = 0;
+    total_calls++;
+    
     if (!initialized || !watched_addresses || !enabled) {
         return;
+    }
+    
+    if ((total_calls % 100000) == 0) {
+        fprintf(stderr, "[MEMWATCH_DEBUG] check_access called %lu times\n", 
+                (unsigned long)total_calls);
     }
     
     static int check_counter = 0;
@@ -164,7 +172,11 @@ void memory_watch_check_access(CPUState *cpu, hwaddr paddr,
         check_counter = 0;
     }
     
+    fprintf(stderr, "[MEMWATCH_DEBUG] Before mutex_lock, addr=0x%lx\n", 
+            (unsigned long)paddr);
     qemu_mutex_lock(&watch_lock);
+    fprintf(stderr, "[MEMWATCH_DEBUG] After mutex_lock, addr=0x%lx\n", 
+            (unsigned long)paddr);
     
     GHashTableIter iter;
     gpointer key, value;
@@ -184,51 +196,76 @@ void memory_watch_check_access(CPUState *cpu, hwaddr paddr,
         }
     }
     
+    fprintf(stderr, "[MEMWATCH_DEBUG] Before mutex_unlock, addr=0x%lx\n", 
+            (unsigned long)paddr);
     qemu_mutex_unlock(&watch_lock);
+    fprintf(stderr, "[MEMWATCH_DEBUG] After mutex_unlock, addr=0x%lx\n", 
+            (unsigned long)paddr);
 }
 
 void memory_watch_init(void)
 {
+    fprintf(stderr, "[MEMWATCH_DEBUG] ========== memory_watch_init() ENTER ==========\n");
+    
     if (initialized) {
+        fprintf(stderr, "[MEMWATCH_DEBUG] Already initialized, returning\n");
         return;
     }
     
+    fprintf(stderr, "[MEMWATCH_DEBUG] Checking ENABLE_MEMORY_WATCH environment variable\n");
     // 检查环境变量ENABLE_MEMORY_WATCH
     const char *env_enable = getenv("ENABLE_MEMORY_WATCH");
     if (env_enable && (strcmp(env_enable, "1") == 0 || strcmp(env_enable, "yes") == 0)) {
         enabled = true;
         fprintf(stderr, "[Memory Watch] Enabled via ENABLE_MEMORY_WATCH\n");
+        fprintf(stderr, "[MEMWATCH_DEBUG] enabled = true\n");
     } else {
         enabled = false;
         fprintf(stderr, "[Memory Watch] Disabled (set ENABLE_MEMORY_WATCH=1 to enable)\n");
+        fprintf(stderr, "[MEMWATCH_DEBUG] enabled = false\n");
     }
     
+    fprintf(stderr, "[MEMWATCH_DEBUG] Opening log file: %s\n", LOG_PATH);
     log_file = fopen(LOG_PATH, "w");
     if (!log_file) {
+        fprintf(stderr, "[MEMWATCH_DEBUG] Failed to open log file\n");
         return;
     }
+    fprintf(stderr, "[MEMWATCH_DEBUG] Log file opened successfully\n");
     
     fprintf(log_file, "# QEMU Memory Watch (Integrated)\n");
     fprintf(log_file, "# Format: [TIMESTAMP] CPU OP ADDR SIZE TYPE SLOT\n");
     fprintf(log_file, "# Enabled: %s\n\n", enabled ? "yes" : "no");
     
+    fprintf(stderr, "[MEMWATCH_DEBUG] Initializing mutex\n");
     qemu_mutex_init(&watch_lock);
+    fprintf(stderr, "[MEMWATCH_DEBUG] Mutex initialized\n");
+    
+    fprintf(stderr, "[MEMWATCH_DEBUG] Creating hash table\n");
     watched_addresses = g_hash_table_new_full(g_direct_hash, g_direct_equal,
                                              NULL, g_free);
+    fprintf(stderr, "[MEMWATCH_DEBUG] Hash table created\n");
     
     // 立即尝试连接RTL socket（RTL应该已经在等待）
     fprintf(stderr, "[Memory Watch] Connecting to RTL socket...\n");
+    fprintf(stderr, "[MEMWATCH_DEBUG] Calling connect_to_rtl()\n");
     sock_fd = connect_to_rtl();
+    fprintf(stderr, "[MEMWATCH_DEBUG] connect_to_rtl() returned fd=%d\n", sock_fd);
+    
     if (sock_fd >= 0) {
         fprintf(log_file, "# Connected to RTL socket\n\n");
         fprintf(stderr, "[Memory Watch] Connected to RTL successfully\n");
+        fprintf(stderr, "[MEMWATCH_DEBUG] RTL socket connected, fd=%d\n", sock_fd);
     } else {
         fprintf(log_file, "# Warning: Not connected to RTL\n\n");
         fprintf(stderr, "[Memory Watch] Warning: Failed to connect to RTL\n");
+        fprintf(stderr, "[MEMWATCH_DEBUG] RTL socket connection failed\n");
     }
     
     fflush(log_file);
     initialized = true;
+    fprintf(stderr, "[MEMWATCH_DEBUG] initialized = true\n");
+    fprintf(stderr, "[MEMWATCH_DEBUG] ========== memory_watch_init() EXIT ==========\n");
 }
 
 void memory_watch_cleanup(void)
