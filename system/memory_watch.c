@@ -67,33 +67,44 @@ static void log_access(const char *op, uint64_t addr, unsigned size,
 
 static void process_watch_command(const char *cmd)
 {
-    char type[32];
-    int slot_id;
     uint64_t addr;
     int size;
     
-    if (sscanf(cmd, "WATCH %31s %d 0x%" PRIx64 " %d",
-              type, &slot_id, &addr, &size) == 4) {
+    // 解析: "WATCH 0x<ADDR> <SIZE>\n"
+    if (sscanf(cmd, "WATCH 0x%" PRIx64 " %d", &addr, &size) == 2) {
         
         qemu_mutex_lock(&watch_lock);
         
+        bool success = false;
         if (!g_hash_table_contains(watched_addresses, GUINT_TO_POINTER(addr))) {
             WatchRange *range = g_new(WatchRange, 1);
             range->start = addr;
-            range->end = addr + 64;
-            g_strlcpy(range->type, type, sizeof(range->type));
-            range->slot_id = slot_id;
+            range->end = addr + size;
+            g_strlcpy(range->type, "CONTEXT", sizeof(range->type));
+            range->slot_id = 0;
             
             g_hash_table_insert(watched_addresses, GUINT_TO_POINTER(addr), range);
             
             if (log_file) {
-                fprintf(log_file, "# Watching: %s Slot=%d Addr=0x%016" PRIx64 "\n",
-                        type, slot_id, addr);
+                fprintf(log_file, "# Watching: Addr=0x%016" PRIx64 " Size=%d\n",
+                        addr, size);
                 fflush(log_file);
             }
+            success = true;
+        } else {
+            // 地址已经在监测列表中
+            success = true;
         }
         
         qemu_mutex_unlock(&watch_lock);
+        
+        // 发送回复
+        const char *reply = success ? "OK\n" : "ERROR\n";
+        send(sock_fd, reply, strlen(reply), 0);
+    } else {
+        // 解析失败，发送ERROR
+        const char *reply = "ERROR\n";
+        send(sock_fd, reply, strlen(reply), 0);
     }
 }
 
@@ -101,34 +112,26 @@ static void check_socket_data(void)
 {
     char buffer[512];
     ssize_t n;
-    static uint64_t reconnect_counter = 0;
     
-    // 如果未连接，每1000次尝试重新连接一次
+    // 如果未连接，直接返回
     if (sock_fd < 0) {
-        reconnect_counter++;
-        if (reconnect_counter >= 1000) {
-            reconnect_counter = 0;
-            sock_fd = connect_to_rtl();
-            if (sock_fd >= 0 && log_file) {
-                fprintf(log_file, "# Connected to RTL socket\n\n");
-                fflush(log_file);
-                fprintf(stderr, "[Memory Watch] Connected to RTL\n");
-            }
-        }
         return;
     }
     
+    // 接收数据
     n = recv(sock_fd, buffer, sizeof(buffer) - 1, MSG_DONTWAIT);
     if (n > 0) {
         buffer[n] = '\0';
         process_watch_command(buffer);
     } else if (n == 0) {
+        // RTL断开连接
         close(sock_fd);
         sock_fd = -1;
         if (log_file) {
             fprintf(log_file, "# RTL disconnected\n");
             fflush(log_file);
         }
+        fprintf(stderr, "[Memory Watch] RTL disconnected\n");
     }
 }
 
@@ -186,11 +189,15 @@ void memory_watch_init(void)
     watched_addresses = g_hash_table_new_full(g_direct_hash, g_direct_equal,
                                              NULL, g_free);
     
+    // 立即尝试连接RTL socket（RTL应该已经在等待）
+    fprintf(stderr, "[Memory Watch] Connecting to RTL socket...\n");
     sock_fd = connect_to_rtl();
     if (sock_fd >= 0) {
         fprintf(log_file, "# Connected to RTL socket\n\n");
+        fprintf(stderr, "[Memory Watch] Connected to RTL successfully\n");
     } else {
         fprintf(log_file, "# Warning: Not connected to RTL\n\n");
+        fprintf(stderr, "[Memory Watch] Warning: Failed to connect to RTL\n");
     }
     
     fflush(log_file);
