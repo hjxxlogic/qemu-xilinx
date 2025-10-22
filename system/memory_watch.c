@@ -32,8 +32,6 @@ static int connect_to_rtl(void)
 {
     struct sockaddr_un addr;
     int fd;
-    int retry = 0;
-    const int max_retries = 100;  // 重试100次，共10秒
     
     fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) {
@@ -44,18 +42,12 @@ static int connect_to_rtl(void)
     addr.sun_family = AF_UNIX;
     g_strlcpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path));
     
-    while (retry < max_retries) {
-        if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
-            int flags = fcntl(fd, F_GETFL, 0);
-            fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-            fprintf(stderr, "[Memory Watch] Connected to RTL after %d retries\n", retry);
-            return fd;
-        }
-        retry++;
-        g_usleep(100000);  // 100ms
+    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
+        int flags = fcntl(fd, F_GETFL, 0);
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        return fd;
     }
     
-    fprintf(stderr, "[Memory Watch] Failed to connect after %d retries\n", max_retries);
     close(fd);
     return -1;
 }
@@ -109,8 +101,20 @@ static void check_socket_data(void)
 {
     char buffer[512];
     ssize_t n;
+    static uint64_t reconnect_counter = 0;
     
+    // 如果未连接，每1000次尝试重新连接一次
     if (sock_fd < 0) {
+        reconnect_counter++;
+        if (reconnect_counter >= 1000) {
+            reconnect_counter = 0;
+            sock_fd = connect_to_rtl();
+            if (sock_fd >= 0 && log_file) {
+                fprintf(log_file, "# Connected to RTL socket\n\n");
+                fflush(log_file);
+                fprintf(stderr, "[Memory Watch] Connected to RTL\n");
+            }
+        }
         return;
     }
     
@@ -121,6 +125,10 @@ static void check_socket_data(void)
     } else if (n == 0) {
         close(sock_fd);
         sock_fd = -1;
+        if (log_file) {
+            fprintf(log_file, "# RTL disconnected\n");
+            fflush(log_file);
+        }
     }
 }
 
