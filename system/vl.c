@@ -135,6 +135,7 @@
 #include "sysemu/iothread.h"
 #include "qemu/guest-random.h"
 #include "qemu/keyval.h"
+#include "sysemu/memory_watch.h"
 
 #define MAX_VIRTIO_CONSOLES 1
 
@@ -3806,6 +3807,9 @@ void qemu_init(int argc, char **argv)
     if (qemu_etrace_mask(ETRACE_F_GPIO)) {
         qemu_etrace_gpio_init();
     }
+
+    /* Initialize memory watch for xHCI context monitoring */
+    memory_watch_init();
 
     resume_mux_open();
 }

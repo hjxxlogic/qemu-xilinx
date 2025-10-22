@@ -18,6 +18,7 @@ system_ss.add(files(
   'dma-helpers.c',
   'globals.c',
   'memory_mapping.c',
+  'memory_watch.c',
   'qdev-monitor.c',
   'qtest.c',
   'rtc.c',

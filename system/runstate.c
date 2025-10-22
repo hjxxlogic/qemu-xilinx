@@ -59,6 +59,7 @@
 #include "sysemu/runstate-action.h"
 #include "sysemu/sysemu.h"
 #include "sysemu/tpm.h"
+#include "sysemu/memory_watch.h"
 #include "trace.h"
 
 static NotifierList exit_notifiers =
@@ -877,5 +878,9 @@ void qemu_cleanup(int status)
     monitor_cleanup();
     qemu_chr_cleanup();
     user_creatable_cleanup();
+    
+    /* Cleanup memory watch */
+    memory_watch_cleanup();
+    
     /* TODO: unref root container, check all devices are ok */
 }

@@ -78,7 +78,6 @@ jobs:
             --extra-cflags="-DREMOTE_PORT_ERR_DEBUG=1" \
             --prefix=$PWD/install \
             --static \
-            --enable-plugins \ 
             || { cat config.log; exit 1; }
         env:
           CFLAGS: -O2 -g
