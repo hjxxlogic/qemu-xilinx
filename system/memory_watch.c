@@ -33,6 +33,7 @@ static int connect_to_rtl(void)
     struct sockaddr_un addr;
     int fd;
     int retry = 0;
+    const int max_retries = 100;  // 重试100次，共10秒
     
     fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) {
@@ -43,16 +44,18 @@ static int connect_to_rtl(void)
     addr.sun_family = AF_UNIX;
     g_strlcpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path));
     
-    while (retry < 10) {
+    while (retry < max_retries) {
         if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
             int flags = fcntl(fd, F_GETFL, 0);
             fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+            fprintf(stderr, "[Memory Watch] Connected to RTL after %d retries\n", retry);
             return fd;
         }
         retry++;
-        g_usleep(100000);
+        g_usleep(100000);  // 100ms
     }
     
+    fprintf(stderr, "[Memory Watch] Failed to connect after %d retries\n", max_retries);
     close(fd);
     return -1;
 }
