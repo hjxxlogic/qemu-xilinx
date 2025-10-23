@@ -104,14 +104,14 @@ static void process_watch_command(const char *cmd)
             // 使用trace事件记录
             if (n >= 3 && strlen(info_str) > 0) {
                 trace_memory_watch_add_region(addr, size, info_str);
-                qemu_log(": memory_watch_add_region: addr: %" PRIx64 " size: %d info: %s\n",
-                         addr, size, info_str);
+                fprintf(stderr, ": memory_watch_add_region: addr: %" PRIx64 " size: %d info: %s\n",
+                        addr, size, info_str);
                 fprintf(stderr, "[MEMWATCH_THREAD] Received command: WATCH 0x%016" PRIx64 " %d [%s]\n",
                         addr, size, info_str);
             } else {
                 trace_memory_watch_add_region(addr, size, "");
-                qemu_log(": memory_watch_add_region: addr: %" PRIx64 " size: %d\n",
-                         addr, size);
+                fprintf(stderr, ": memory_watch_add_region: addr: %" PRIx64 " size: %d\n",
+                        addr, size);
                 fprintf(stderr, "[MEMWATCH_THREAD] Received command: WATCH 0x%016" PRIx64 " %d\n",
                         addr, size);
             }
@@ -253,8 +253,8 @@ void memory_watch_check_access(CPUState *cpu, hwaddr paddr,
                 trace_memory_watch_access_read(cpu_index, paddr, size);
             }
             
-            // 使用remote_port风格的qemu_log输出
-            qemu_log(": memory_watch_access: address: %" PRIx64 "\n", paddr);
+            // 使用remote_port风格的输出（fprintf到stderr）
+            fprintf(stderr, ": memory_watch_access: address: %" PRIx64 "\n", paddr);
             
             // 读取并输出内存内容（使用qemu_hexdump）
             if (cpu) {
@@ -324,7 +324,7 @@ void memory_watch_init(void)
     
     // 使用trace事件记录初始化
     trace_memory_watch_init();
-    qemu_log(": memory_watch_init: enabled with socket path %s\n", socket_path);
+    fprintf(stderr, ": memory_watch_init: enabled with socket path %s\n", socket_path);
     
     initialized = true;
     fprintf(stderr, "[MEMWATCH_DEBUG] initialized = true\n");
