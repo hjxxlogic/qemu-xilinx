@@ -279,6 +279,11 @@ void memory_watch_cleanup(void)
         return;
     }
     
+    // 如果禁用，直接返回（没有mutex需要清理）
+    if (!enabled) {
+        return;
+    }
+    
     qemu_mutex_lock(&watch_lock);
     
     if (log_file) {
