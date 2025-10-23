@@ -104,10 +104,14 @@ static void process_watch_command(const char *cmd)
             // 使用trace事件记录
             if (n >= 3 && strlen(info_str) > 0) {
                 trace_memory_watch_add_region(addr, size, info_str);
+                qemu_log(": memory_watch_add_region: addr: %" PRIx64 " size: %d info: %s\n",
+                         addr, size, info_str);
                 fprintf(stderr, "[MEMWATCH_THREAD] Received command: WATCH 0x%016" PRIx64 " %d [%s]\n",
                         addr, size, info_str);
             } else {
                 trace_memory_watch_add_region(addr, size, "");
+                qemu_log(": memory_watch_add_region: addr: %" PRIx64 " size: %d\n",
+                         addr, size);
                 fprintf(stderr, "[MEMWATCH_THREAD] Received command: WATCH 0x%016" PRIx64 " %d\n",
                         addr, size);
             }
@@ -249,6 +253,22 @@ void memory_watch_check_access(CPUState *cpu, hwaddr paddr,
                 trace_memory_watch_access_read(cpu_index, paddr, size);
             }
             
+            // 使用remote_port风格的qemu_log输出
+            qemu_log(": memory_watch_access: address: %" PRIx64 "\n", paddr);
+            
+            // 读取并输出内存内容（使用qemu_hexdump）
+            if (cpu) {
+                CPUClass *cc = CPU_GET_CLASS(cpu);
+                if (cc->memory_rw_debug) {
+                    uint8_t buf[32] = {0};  // 最多读取32字节
+                    int read_size = size > 32 ? 32 : size;
+                    if (cc->memory_rw_debug(cpu, paddr, buf, read_size, false) == 0) {
+                        qemu_hexdump(stderr, is_write ? ": write: " : ": read: ",
+                                     (const char *)buf, read_size);
+                    }
+                }
+            }
+            
             access_count++;
             break;
         }
@@ -304,6 +324,7 @@ void memory_watch_init(void)
     
     // 使用trace事件记录初始化
     trace_memory_watch_init();
+    qemu_log(": memory_watch_init: enabled with socket path %s\n", socket_path);
     
     initialized = true;
     fprintf(stderr, "[MEMWATCH_DEBUG] initialized = true\n");
