@@ -223,8 +223,13 @@ void memory_watch_init(void)
         enabled = false;
         fprintf(stderr, "[Memory Watch] Disabled (set ENABLE_MEMORY_WATCH=1 to enable)\n");
         fprintf(stderr, "[MEMWATCH_DEBUG] enabled = false\n");
+        fprintf(stderr, "[MEMWATCH_DEBUG] Skipping initialization (disabled)\n");
+        fprintf(stderr, "[MEMWATCH_DEBUG] ========== memory_watch_init() EXIT ==========\n");
+        initialized = true;  // Mark as initialized to prevent re-entry
+        return;  // Early return - skip all initialization
     }
     
+    // Only initialize if enabled
     fprintf(stderr, "[MEMWATCH_DEBUG] Opening log file: %s\n", LOG_PATH);
     log_file = fopen(LOG_PATH, "w");
     if (!log_file) {
@@ -235,7 +240,7 @@ void memory_watch_init(void)
     
     fprintf(log_file, "# QEMU Memory Watch (Integrated)\n");
     fprintf(log_file, "# Format: [TIMESTAMP] CPU OP ADDR SIZE TYPE SLOT\n");
-    fprintf(log_file, "# Enabled: %s\n\n", enabled ? "yes" : "no");
+    fprintf(log_file, "# Enabled: yes\n\n");
     
     fprintf(stderr, "[MEMWATCH_DEBUG] Initializing mutex\n");
     qemu_mutex_init(&watch_lock);
