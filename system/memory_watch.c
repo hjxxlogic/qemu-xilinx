@@ -10,6 +10,7 @@
 #include "sysemu/memory_watch.h"
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <errno.h>
 
 #define SOCKET_PATH "/tmp/xhci_context_monitor.sock"
 #define LOG_PATH "/tmp/qemu_memory_watch.log"
@@ -33,23 +34,41 @@ static int connect_to_rtl(void)
 {
     struct sockaddr_un addr;
     int fd;
-    
-    fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (fd < 0) {
-        return -1;
-    }
+    int retry_count = 0;
+    const int max_retries = 10;  // 最多重试10次
+    const int retry_delay_ms = 100;  // 每次重试间隔100ms
     
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
     g_strlcpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path));
     
-    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
-        int flags = fcntl(fd, F_GETFL, 0);
-        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-        return fd;
+    // 重试连接，因为RTL的accept线程可能还没准备好
+    while (retry_count < max_retries) {
+        fd = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (fd < 0) {
+            fprintf(stderr, "[MEMWATCH_DEBUG] Failed to create socket: %s\n", strerror(errno));
+            return -1;
+        }
+        
+        if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
+            // 连接成功，设置为非阻塞模式
+            int flags = fcntl(fd, F_GETFL, 0);
+            fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+            fprintf(stderr, "[MEMWATCH_DEBUG] Connected to RTL on attempt %d\n", retry_count + 1);
+            return fd;
+        }
+        
+        fprintf(stderr, "[MEMWATCH_DEBUG] Connect attempt %d failed: %s\n", 
+                retry_count + 1, strerror(errno));
+        close(fd);
+        
+        retry_count++;
+        if (retry_count < max_retries) {
+            g_usleep(retry_delay_ms * 1000);  // 转换为微秒
+        }
     }
     
-    close(fd);
+    fprintf(stderr, "[MEMWATCH_DEBUG] Failed to connect after %d attempts\n", max_retries);
     return -1;
 }
 
