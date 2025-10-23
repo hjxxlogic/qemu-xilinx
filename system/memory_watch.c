@@ -12,7 +12,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <errno.h>
-
+#include "qemu/cutils.h"
 static char *socket_path = NULL;
 static int sock_fd = -1;
 static GHashTable *watched_addresses = NULL;
