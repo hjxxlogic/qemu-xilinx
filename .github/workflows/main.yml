@@ -126,9 +126,12 @@ jobs:
         run: |
           ./install/bin/qemu-system-arm -device help | grep remote-port || exit 1
           ./install/bin/qemu-system-aarch64 -device help | grep remote-port || exit 1
+          ./install/bin/qemu-system-x86_64 -device help | grep remote-port || exit 1
           ./install/bin/qemu-system-arm -device help | grep virtio-9p || exit 1
           ./install/bin/qemu-system-aarch64 -version
           ./install/bin/qemu-system-arm -version
+          ./install/bin/qemu-system-x86_64 -version
+          echo "✓ All QEMU binaries verified with Remote-Port support"
 
       - name: Package Artifacts
         run: |
