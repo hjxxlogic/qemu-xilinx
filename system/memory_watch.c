@@ -8,15 +8,13 @@
 #include "qemu/thread.h"
 #include "hw/core/cpu.h"
 #include "sysemu/memory_watch.h"
+#include "trace.h"
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <errno.h>
 
-#define SOCKET_PATH "/tmp/xhci_context_monitor.sock"
-#define LOG_PATH "/tmp/qemu_memory_watch.log"
-
+static char *socket_path = NULL;
 static int sock_fd = -1;
-static FILE *log_file = NULL;
 static GHashTable *watched_addresses = NULL;
 static QemuMutex watch_lock;
 static uint64_t access_count = 0;
@@ -39,11 +37,16 @@ static int connect_to_rtl(void)
     const int retry_delay_ms = 200;  // 每次重试间隔200ms
     const int log_interval = 10;     // 每10次尝试打印一次日志
     
+    if (!socket_path) {
+        fprintf(stderr, "[MEMWATCH_THREAD] Socket path not configured\n");
+        return -1;
+    }
+    
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    g_strlcpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path));
+    g_strlcpy(addr.sun_path, socket_path, sizeof(addr.sun_path));
     
-    fprintf(stderr, "[MEMWATCH_THREAD] Starting connection attempts to RTL (unlimited retries)... socket path: %s\n", SOCKET_PATH);
+    fprintf(stderr, "[MEMWATCH_THREAD] Starting connection attempts to RTL (unlimited retries)... socket path: %s\n", socket_path);
     
     // 无限重试连接，直到成功或线程被要求退出
     while (!thread_should_exit) {
@@ -75,25 +78,18 @@ static int connect_to_rtl(void)
     return -1;
 }
 
-static void log_access(const char *op, uint64_t addr, unsigned size, unsigned int cpu)
-{
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    
-    if (log_file) {
-        fprintf(log_file, "[%ld.%06ld] CPU%u %s 0x%016" PRIx64 " size=%u\n",
-                (long)tv.tv_sec, (long)tv.tv_usec, cpu, op, addr, size);
-        fflush(log_file);
-    }
-}
 
 static void process_watch_command(const char *cmd)
 {
     uint64_t addr;
     int size;
+    char info_str[256] = {0};
     
-    // 解析: "WATCH 0x<ADDR> <SIZE>\n"
-    if (sscanf(cmd, "WATCH 0x%" PRIx64 " %d", &addr, &size) == 2) {
+    // 解析: "WATCH 0x<ADDR> <SIZE> [INFO]\n"
+    // 先尝试解析带info的格式
+    int n = sscanf(cmd, "WATCH 0x%" PRIx64 " %d %255[^\n]", &addr, &size, info_str);
+    
+    if (n >= 2) {  // 至少需要地址和大小
         
         qemu_mutex_lock(&watch_lock);
         
@@ -105,10 +101,15 @@ static void process_watch_command(const char *cmd)
             
             g_hash_table_insert(watched_addresses, GUINT_TO_POINTER(addr), range);
             
-            if (log_file) {
-                fprintf(log_file, "# Watching: Addr=0x%016" PRIx64 " Size=%d\n",
+            // 使用trace事件记录
+            if (n >= 3 && strlen(info_str) > 0) {
+                trace_memory_watch_add_region(addr, size, info_str);
+                fprintf(stderr, "[MEMWATCH_THREAD] Received command: WATCH 0x%016" PRIx64 " %d [%s]\n",
+                        addr, size, info_str);
+            } else {
+                trace_memory_watch_add_region(addr, size, "");
+                fprintf(stderr, "[MEMWATCH_THREAD] Received command: WATCH 0x%016" PRIx64 " %d\n",
                         addr, size);
-                fflush(log_file);
             }
             success = true;
         } else {
@@ -141,23 +142,11 @@ static void *rtl_thread_func(void *arg)
     
     if (sock_fd < 0) {
         fprintf(stderr, "[MEMWATCH_THREAD] Failed to connect to RTL, thread exiting\n");
-        qemu_mutex_lock(&watch_lock);
-        if (log_file) {
-            fprintf(log_file, "# Warning: Failed to connect to RTL\n\n");
-            fflush(log_file);
-        }
-        qemu_mutex_unlock(&watch_lock);
         thread_running = false;
         return NULL;
     }
     
     fprintf(stderr, "[MEMWATCH_THREAD] Connected to RTL successfully, fd=%d\n", sock_fd);
-    qemu_mutex_lock(&watch_lock);
-    if (log_file) {
-        fprintf(log_file, "# Connected to RTL socket\n\n");
-        fflush(log_file);
-    }
-    qemu_mutex_unlock(&watch_lock);
     
     // 主循环：接收和处理命令
     while (!thread_should_exit) {
@@ -194,12 +183,6 @@ static void *rtl_thread_func(void *arg)
         } else if (n == 0) {
             // RTL断开连接
             fprintf(stderr, "[MEMWATCH_THREAD] RTL disconnected\n");
-            qemu_mutex_lock(&watch_lock);
-            if (log_file) {
-                fprintf(log_file, "# RTL disconnected\n");
-                fflush(log_file);
-            }
-            qemu_mutex_unlock(&watch_lock);
             break;
         } else {
             if (errno != EAGAIN && errno != EWOULDBLOCK) {
@@ -257,10 +240,14 @@ void memory_watch_check_access(CPUState *cpu, hwaddr paddr,
         WatchRange *range = (WatchRange *)value;
         
         if (paddr >= range->start && paddr < range->end) {
-            const char *op = is_write ? "WRITE" : "READ";
             unsigned int cpu_index = cpu ? cpu->cpu_index : 0;
             
-            log_access(op, paddr, size, cpu_index);
+            // 使用trace事件记录访问
+            if (is_write) {
+                trace_memory_watch_access_write(cpu_index, paddr, size);
+            } else {
+                trace_memory_watch_access_read(cpu_index, paddr, size);
+            }
             
             access_count++;
             break;
@@ -279,36 +266,25 @@ void memory_watch_init(void)
         return;
     }
     
-    fprintf(stderr, "[MEMWATCH_DEBUG] Checking ENABLE_MEMORY_WATCH environment variable\n");
-    // 检查环境变量ENABLE_MEMORY_WATCH
-    const char *env_enable = getenv("ENABLE_MEMORY_WATCH");
-    if (env_enable && (strcmp(env_enable, "1") == 0 || strcmp(env_enable, "yes") == 0)) {
-        enabled = true;
-        fprintf(stderr, "[Memory Watch] Enabled via ENABLE_MEMORY_WATCH\n");
-        fprintf(stderr, "[MEMWATCH_DEBUG] enabled = true\n");
-    } else {
+    fprintf(stderr, "[MEMWATCH_DEBUG] Checking MEMORY_WATCH_PATH environment variable\n");
+    // 从环境变量获取socket路径
+    const char *env_path = getenv("MEMORY_WATCH_PATH");
+    if (!env_path || strlen(env_path) == 0) {
         enabled = false;
-        fprintf(stderr, "[Memory Watch] Disabled (set ENABLE_MEMORY_WATCH=1 to enable)\n");
-        fprintf(stderr, "[MEMWATCH_DEBUG] enabled = false\n");
+        fprintf(stderr, "[Memory Watch] Disabled (MEMORY_WATCH_PATH not set or empty)\n");
         fprintf(stderr, "[MEMWATCH_DEBUG] Skipping initialization (disabled)\n");
         fprintf(stderr, "[MEMWATCH_DEBUG] ========== memory_watch_init() EXIT ==========\n");
         initialized = true;  // Mark as initialized to prevent re-entry
         return;  // Early return - skip all initialization
     }
     
+    // 保存socket路径
+    socket_path = g_strdup(env_path);
+    enabled = true;
+    fprintf(stderr, "[Memory Watch] Enabled with socket path: %s\n", socket_path);
+    fprintf(stderr, "[MEMWATCH_DEBUG] enabled = true\n");
+    
     // Only initialize if enabled
-    fprintf(stderr, "[MEMWATCH_DEBUG] Opening log file: %s\n", LOG_PATH);
-    log_file = fopen(LOG_PATH, "w");
-    if (!log_file) {
-        fprintf(stderr, "[MEMWATCH_DEBUG] Failed to open log file\n");
-        return;
-    }
-    fprintf(stderr, "[MEMWATCH_DEBUG] Log file opened successfully\n");
-    
-    fprintf(log_file, "# QEMU Memory Watch (Integrated)\n");
-    fprintf(log_file, "# Format: [TIMESTAMP] CPU OP ADDR SIZE\n");
-    fprintf(log_file, "# Enabled: yes\n\n");
-    
     fprintf(stderr, "[MEMWATCH_DEBUG] Initializing mutex\n");
     qemu_mutex_init(&watch_lock);
     fprintf(stderr, "[MEMWATCH_DEBUG] Mutex initialized\n");
@@ -326,7 +302,9 @@ void memory_watch_init(void)
                        QEMU_THREAD_DETACHED);
     fprintf(stderr, "[Memory Watch] Background thread started\n");
     
-    fflush(log_file);
+    // 使用trace事件记录初始化
+    trace_memory_watch_init();
+    
     initialized = true;
     fprintf(stderr, "[MEMWATCH_DEBUG] initialized = true\n");
     fprintf(stderr, "[MEMWATCH_DEBUG] ========== memory_watch_init() EXIT ==========\n");
@@ -364,13 +342,12 @@ void memory_watch_cleanup(void)
     
     qemu_mutex_lock(&watch_lock);
     
-    if (log_file) {
-        fprintf(log_file, "\n# Memory Watch Statistics\n");
-        fprintf(log_file, "# Total memory accesses detected: %" PRIu64 "\n", access_count);
-        fprintf(log_file, "# Watched addresses: %u\n",
+    // 打印统计信息到stderr
+    fprintf(stderr, "[Memory Watch] Statistics:\n");
+    fprintf(stderr, "[Memory Watch]   Total accesses: %" PRIu64 "\n", access_count);
+    if (watched_addresses) {
+        fprintf(stderr, "[Memory Watch]   Watched addresses: %u\n",
                 g_hash_table_size(watched_addresses));
-        fclose(log_file);
-        log_file = NULL;
     }
     
     if (watched_addresses) {
@@ -381,6 +358,11 @@ void memory_watch_cleanup(void)
     if (sock_fd >= 0) {
         close(sock_fd);
         sock_fd = -1;
+    }
+    
+    if (socket_path) {
+        g_free(socket_path);
+        socket_path = NULL;
     }
     
     qemu_mutex_unlock(&watch_lock);
