@@ -22,12 +22,13 @@ static QemuMutex watch_lock;
 static uint64_t access_count = 0;
 static bool initialized = false;
 static volatile bool enabled = false;  // volatile for lock-free read
+static QemuThread rtl_thread;
+static volatile bool thread_running = false;
+static volatile bool thread_should_exit = false;
 
 typedef struct {
     uint64_t start;
     uint64_t end;
-    char type[32];
-    int slot_id;
 } WatchRange;
 
 static int connect_to_rtl(void)
@@ -35,52 +36,53 @@ static int connect_to_rtl(void)
     struct sockaddr_un addr;
     int fd;
     int retry_count = 0;
-    const int max_retries = 10;  // 最多重试10次
-    const int retry_delay_ms = 100;  // 每次重试间隔100ms
+    const int retry_delay_ms = 200;  // 每次重试间隔200ms
+    const int log_interval = 10;     // 每10次尝试打印一次日志
     
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
     g_strlcpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path));
     
-    // 重试连接，因为RTL的accept线程可能还没准备好
-    while (retry_count < max_retries) {
+    fprintf(stderr, "[MEMWATCH_THREAD] Starting connection attempts to RTL (unlimited retries)... socket path: %s\n", SOCKET_PATH);
+    
+    // 无限重试连接，直到成功或线程被要求退出
+    while (!thread_should_exit) {
         fd = socket(AF_UNIX, SOCK_STREAM, 0);
         if (fd < 0) {
-            fprintf(stderr, "[MEMWATCH_DEBUG] Failed to create socket: %s\n", strerror(errno));
-            return -1;
+            fprintf(stderr, "[MEMWATCH_THREAD] Failed to create socket: %s\n", strerror(errno));
+            g_usleep(retry_delay_ms * 1000);
+            continue;
         }
         
         if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
-            // 连接成功，设置为非阻塞模式
-            int flags = fcntl(fd, F_GETFL, 0);
-            fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-            fprintf(stderr, "[MEMWATCH_DEBUG] Connected to RTL on attempt %d\n", retry_count + 1);
+            // 连接成功，保持阻塞模式用于后台线程
+            fprintf(stderr, "[MEMWATCH_THREAD] Connected to RTL successfully after %d attempts\n", retry_count + 1);
             return fd;
         }
         
-        fprintf(stderr, "[MEMWATCH_DEBUG] Connect attempt %d failed: %s\n", 
-                retry_count + 1, strerror(errno));
+        // 定期打印日志，避免刷屏
+        if (retry_count == 0 || (retry_count + 1) % log_interval == 0) {
+            fprintf(stderr, "[MEMWATCH_THREAD] Connect attempt %d failed: %s (will keep retrying...)\n", 
+                    retry_count + 1, strerror(errno));
+        }
         close(fd);
         
         retry_count++;
-        if (retry_count < max_retries) {
-            g_usleep(retry_delay_ms * 1000);  // 转换为微秒
-        }
+        g_usleep(retry_delay_ms * 1000);  // 转换为微秒
     }
     
-    fprintf(stderr, "[MEMWATCH_DEBUG] Failed to connect after %d attempts\n", max_retries);
+    fprintf(stderr, "[MEMWATCH_THREAD] Connection attempts cancelled after %d tries\n", retry_count);
     return -1;
 }
 
-static void log_access(const char *op, uint64_t addr, unsigned size,
-                      const char *type, int slot_id, unsigned int cpu)
+static void log_access(const char *op, uint64_t addr, unsigned size, unsigned int cpu)
 {
     struct timeval tv;
     gettimeofday(&tv, NULL);
     
     if (log_file) {
-        fprintf(log_file, "[%ld.%06ld] CPU%u %s 0x%016" PRIx64 " size=%u type=%s slot=%d\n",
-                (long)tv.tv_sec, (long)tv.tv_usec, cpu, op, addr, size, type, slot_id);
+        fprintf(log_file, "[%ld.%06ld] CPU%u %s 0x%016" PRIx64 " size=%u\n",
+                (long)tv.tv_sec, (long)tv.tv_usec, cpu, op, addr, size);
         fflush(log_file);
     }
 }
@@ -100,8 +102,6 @@ static void process_watch_command(const char *cmd)
             WatchRange *range = g_new(WatchRange, 1);
             range->start = addr;
             range->end = addr + size;
-            g_strlcpy(range->type, "CONTEXT", sizeof(range->type));
-            range->slot_id = 0;
             
             g_hash_table_insert(watched_addresses, GUINT_TO_POINTER(addr), range);
             
@@ -128,31 +128,96 @@ static void process_watch_command(const char *cmd)
     }
 }
 
-static void check_socket_data(void)
+// 后台线程函数：处理RTL连接和命令
+static void *rtl_thread_func(void *arg)
 {
     char buffer[512];
     ssize_t n;
     
-    // 如果未连接，直接返回
-    if (sock_fd < 0) {
-        return;
-    }
+    fprintf(stderr, "[MEMWATCH_THREAD] Background thread started\n");
     
-    // 接收数据
-    n = recv(sock_fd, buffer, sizeof(buffer) - 1, MSG_DONTWAIT);
-    if (n > 0) {
-        buffer[n] = '\0';
-        process_watch_command(buffer);
-    } else if (n == 0) {
-        // RTL断开连接
-        close(sock_fd);
-        sock_fd = -1;
+    // 尝试连接到RTL
+    sock_fd = connect_to_rtl();
+    
+    if (sock_fd < 0) {
+        fprintf(stderr, "[MEMWATCH_THREAD] Failed to connect to RTL, thread exiting\n");
+        qemu_mutex_lock(&watch_lock);
         if (log_file) {
-            fprintf(log_file, "# RTL disconnected\n");
+            fprintf(log_file, "# Warning: Failed to connect to RTL\n\n");
             fflush(log_file);
         }
-        fprintf(stderr, "[Memory Watch] RTL disconnected\n");
+        qemu_mutex_unlock(&watch_lock);
+        thread_running = false;
+        return NULL;
     }
+    
+    fprintf(stderr, "[MEMWATCH_THREAD] Connected to RTL successfully, fd=%d\n", sock_fd);
+    qemu_mutex_lock(&watch_lock);
+    if (log_file) {
+        fprintf(log_file, "# Connected to RTL socket\n\n");
+        fflush(log_file);
+    }
+    qemu_mutex_unlock(&watch_lock);
+    
+    // 主循环：接收和处理命令
+    while (!thread_should_exit) {
+        // 阻塞接收（带超时）
+        struct timeval tv;
+        fd_set readfds;
+        
+        FD_ZERO(&readfds);
+        FD_SET(sock_fd, &readfds);
+        tv.tv_sec = 1;  // 1秒超时
+        tv.tv_usec = 0;
+        
+        int ret = select(sock_fd + 1, &readfds, NULL, NULL, &tv);
+        
+        if (ret < 0) {
+            if (errno == EINTR) {
+                continue;  // 被信号中断，继续
+            }
+            fprintf(stderr, "[MEMWATCH_THREAD] select() error: %s\n", strerror(errno));
+            break;
+        }
+        
+        if (ret == 0) {
+            // 超时，继续循环检查thread_should_exit
+            continue;
+        }
+        
+        // 有数据可读
+        n = recv(sock_fd, buffer, sizeof(buffer) - 1, 0);
+        if (n > 0) {
+            buffer[n] = '\0';
+            fprintf(stderr, "[MEMWATCH_THREAD] Received command: %s", buffer);
+            process_watch_command(buffer);
+        } else if (n == 0) {
+            // RTL断开连接
+            fprintf(stderr, "[MEMWATCH_THREAD] RTL disconnected\n");
+            qemu_mutex_lock(&watch_lock);
+            if (log_file) {
+                fprintf(log_file, "# RTL disconnected\n");
+                fflush(log_file);
+            }
+            qemu_mutex_unlock(&watch_lock);
+            break;
+        } else {
+            if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                fprintf(stderr, "[MEMWATCH_THREAD] recv() error: %s\n", strerror(errno));
+                break;
+            }
+        }
+    }
+    
+    // 清理
+    if (sock_fd >= 0) {
+        close(sock_fd);
+        sock_fd = -1;
+    }
+    
+    fprintf(stderr, "[MEMWATCH_THREAD] Background thread exiting\n");
+    thread_running = false;
+    return NULL;
 }
 
 void memory_watch_set_enabled(bool enable)
@@ -173,29 +238,16 @@ bool memory_watch_is_enabled(void)
 void memory_watch_check_access(CPUState *cpu, hwaddr paddr, 
                                unsigned size, bool is_write)
 {
-    static uint64_t total_calls = 0;
-    total_calls++;
-    
     if (!initialized || !watched_addresses || !enabled) {
         return;
     }
     
-    if ((total_calls % 100000) == 0) {
-        fprintf(stderr, "[MEMWATCH_DEBUG] check_access called %lu times\n", 
-                (unsigned long)total_calls);
+    // 快速路径：无锁检查（仅在有监控地址时才加锁）
+    if (g_hash_table_size(watched_addresses) == 0) {
+        return;
     }
     
-    static int check_counter = 0;
-    if (++check_counter >= 1000) {
-        check_socket_data();
-        check_counter = 0;
-    }
-    
-    fprintf(stderr, "[MEMWATCH_DEBUG] Before mutex_lock, addr=0x%lx\n", 
-            (unsigned long)paddr);
     qemu_mutex_lock(&watch_lock);
-    fprintf(stderr, "[MEMWATCH_DEBUG] After mutex_lock, addr=0x%lx\n", 
-            (unsigned long)paddr);
     
     GHashTableIter iter;
     gpointer key, value;
@@ -208,18 +260,14 @@ void memory_watch_check_access(CPUState *cpu, hwaddr paddr,
             const char *op = is_write ? "WRITE" : "READ";
             unsigned int cpu_index = cpu ? cpu->cpu_index : 0;
             
-            log_access(op, paddr, size, range->type, range->slot_id, cpu_index);
+            log_access(op, paddr, size, cpu_index);
             
             access_count++;
             break;
         }
     }
     
-    fprintf(stderr, "[MEMWATCH_DEBUG] Before mutex_unlock, addr=0x%lx\n", 
-            (unsigned long)paddr);
     qemu_mutex_unlock(&watch_lock);
-    fprintf(stderr, "[MEMWATCH_DEBUG] After mutex_unlock, addr=0x%lx\n", 
-            (unsigned long)paddr);
 }
 
 void memory_watch_init(void)
@@ -258,7 +306,7 @@ void memory_watch_init(void)
     fprintf(stderr, "[MEMWATCH_DEBUG] Log file opened successfully\n");
     
     fprintf(log_file, "# QEMU Memory Watch (Integrated)\n");
-    fprintf(log_file, "# Format: [TIMESTAMP] CPU OP ADDR SIZE TYPE SLOT\n");
+    fprintf(log_file, "# Format: [TIMESTAMP] CPU OP ADDR SIZE\n");
     fprintf(log_file, "# Enabled: yes\n\n");
     
     fprintf(stderr, "[MEMWATCH_DEBUG] Initializing mutex\n");
@@ -270,21 +318,13 @@ void memory_watch_init(void)
                                              NULL, g_free);
     fprintf(stderr, "[MEMWATCH_DEBUG] Hash table created\n");
     
-    // 立即尝试连接RTL socket（RTL应该已经在等待）
-    fprintf(stderr, "[Memory Watch] Connecting to RTL socket...\n");
-    fprintf(stderr, "[MEMWATCH_DEBUG] Calling connect_to_rtl()\n");
-    sock_fd = connect_to_rtl();
-    fprintf(stderr, "[MEMWATCH_DEBUG] connect_to_rtl() returned fd=%d\n", sock_fd);
-    
-    if (sock_fd >= 0) {
-        fprintf(log_file, "# Connected to RTL socket\n\n");
-        fprintf(stderr, "[Memory Watch] Connected to RTL successfully\n");
-        fprintf(stderr, "[MEMWATCH_DEBUG] RTL socket connected, fd=%d\n", sock_fd);
-    } else {
-        fprintf(log_file, "# Warning: Not connected to RTL\n\n");
-        fprintf(stderr, "[Memory Watch] Warning: Failed to connect to RTL\n");
-        fprintf(stderr, "[MEMWATCH_DEBUG] RTL socket connection failed\n");
-    }
+    // 启动后台线程处理RTL连接和命令
+    fprintf(stderr, "[Memory Watch] Starting background thread for RTL connection...\n");
+    thread_should_exit = false;
+    thread_running = true;
+    qemu_thread_create(&rtl_thread, "memwatch-rtl", rtl_thread_func, NULL, 
+                       QEMU_THREAD_DETACHED);
+    fprintf(stderr, "[Memory Watch] Background thread started\n");
     
     fflush(log_file);
     initialized = true;
@@ -301,6 +341,25 @@ void memory_watch_cleanup(void)
     // 如果禁用，直接返回（没有mutex需要清理）
     if (!enabled) {
         return;
+    }
+    
+    // 停止后台线程
+    if (thread_running) {
+        fprintf(stderr, "[Memory Watch] Stopping background thread...\n");
+        thread_should_exit = true;
+        
+        // 等待线程退出（最多2秒）
+        int wait_count = 0;
+        while (thread_running && wait_count < 20) {
+            g_usleep(100000);  // 100ms
+            wait_count++;
+        }
+        
+        if (thread_running) {
+            fprintf(stderr, "[Memory Watch] Warning: Background thread did not exit cleanly\n");
+        } else {
+            fprintf(stderr, "[Memory Watch] Background thread stopped\n");
+        }
     }
     
     qemu_mutex_lock(&watch_lock);
