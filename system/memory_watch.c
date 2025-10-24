@@ -261,7 +261,7 @@ void memory_watch_check_access(CPUState *cpu, hwaddr paddr,
             // 读取并输出内存内容
             uint8_t buf[32] = {0};  // 最多读取32字节
             int read_size = size > 32 ? 32 : size;
-            MemTxResult result;
+           
             
             // 尝试使用CPU的memory_rw_debug（如果CPU存在）
             bool read_success = false;
@@ -278,6 +278,7 @@ void memory_watch_check_access(CPUState *cpu, hwaddr paddr,
             // 如果CPU方法失败或CPU为NULL，使用address_space_read
             /*
             if (!read_success) {
+                MemTxResult result;
                 result = address_space_read(&address_space_memory, paddr,
                                            MEMTXATTRS_UNSPECIFIED, buf, read_size);
                 if (result == MEMTX_OK) {
