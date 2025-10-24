@@ -276,6 +276,7 @@ void memory_watch_check_access(CPUState *cpu, hwaddr paddr,
             }
             
             // 如果CPU方法失败或CPU为NULL，使用address_space_read
+            /*
             if (!read_success) {
                 result = address_space_read(&address_space_memory, paddr,
                                            MEMTXATTRS_UNSPECIFIED, buf, read_size);
@@ -283,6 +284,7 @@ void memory_watch_check_access(CPUState *cpu, hwaddr paddr,
                     read_success = true;
                 }
             }
+            */
             
             // 输出读取的数据
             if (read_success) {
