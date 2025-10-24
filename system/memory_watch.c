@@ -13,6 +13,8 @@
 #include <sys/un.h>
 #include <errno.h>
 #include "qemu/cutils.h"
+#include "exec/memory.h"
+#include "exec/address-spaces.h"
 static char *socket_path = NULL;
 static int sock_fd = -1;
 static GHashTable *watched_addresses = NULL;
@@ -256,17 +258,38 @@ void memory_watch_check_access(CPUState *cpu, hwaddr paddr,
             // 使用remote_port风格的输出（fprintf到stderr）
             fprintf(stderr, ": memory_watch_access: address: %" PRIx64 "\n", paddr);
             
-            // 读取并输出内存内容（使用qemu_hexdump）
+            // 读取并输出内存内容
+            uint8_t buf[32] = {0};  // 最多读取32字节
+            int read_size = size > 32 ? 32 : size;
+            MemTxResult result;
+            
+            // 尝试使用CPU的memory_rw_debug（如果CPU存在）
+            bool read_success = false;
             if (cpu) {
                 CPUClass *cc = CPU_GET_CLASS(cpu);
                 if (cc->memory_rw_debug) {
-                    uint8_t buf[32] = {0};  // 最多读取32字节
-                    int read_size = size > 32 ? 32 : size;
-                    if (cc->memory_rw_debug(cpu, paddr, buf, read_size, false) == 0) {
-                        qemu_hexdump(stderr, is_write ? ": write: " : ": read: ",
-                                     (const char *)buf, read_size);
+                    int ret = cc->memory_rw_debug(cpu, paddr, buf, read_size, false);
+                    if (ret == 0) {
+                        read_success = true;
                     }
                 }
+            }
+            
+            // 如果CPU方法失败或CPU为NULL，使用address_space_read
+            if (!read_success) {
+                result = address_space_read(&address_space_memory, paddr,
+                                           MEMTXATTRS_UNSPECIFIED, buf, read_size);
+                if (result == MEMTX_OK) {
+                    read_success = true;
+                }
+            }
+            
+            // 输出读取的数据
+            if (read_success) {
+                qemu_hexdump(stderr, is_write ? ": write" : ": read",
+                             (const char *)buf, read_size);
+            } else {
+                fprintf(stderr, ": memory_read_failed\n");
             }
             
             access_count++;
