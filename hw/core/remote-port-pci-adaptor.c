@@ -33,6 +33,8 @@ typedef struct RemotePortPCIAdaptor {
         uint32_t class_id;
         uint8_t prog_if;
         char *chardev_id;
+        bool sync;
+        uint64_t sync_quantum;
     } cfg;
 
     struct RemotePort *rp;
@@ -71,6 +73,12 @@ static void rp_pci_init(Object *obj)
     object_property_add_child(OBJECT(s), "rp", OBJECT(s->rp));
     /* Drop once since we now own it twice. */
     object_unref(OBJECT(s->rp));
+
+    /* Set sync properties on the child RemotePort device */
+    object_property_set_bool(OBJECT(s->rp), "sync", s->cfg.sync, &error_abort);
+    if (s->cfg.sync) {
+        object_property_set_uint(OBJECT(s->rp), "sync-quantum", s->cfg.sync_quantum, &error_abort);
+    }
 }
 
 static Property rp_properties[] = {
@@ -82,6 +90,9 @@ static Property rp_properties[] = {
                        PCI_CLASS_NETWORK_ETHERNET),
     DEFINE_PROP_UINT8("prog-if", RemotePortPCIAdaptor, cfg.prog_if, 1),
     DEFINE_PROP_STRING("chardev", RemotePortPCIAdaptor, cfg.chardev_id),
+    DEFINE_PROP_BOOL("sync", RemotePortPCIAdaptor, cfg.sync, false),
+    DEFINE_PROP_UINT64("sync-quantum", RemotePortPCIAdaptor, cfg.sync_quantum,
+                       1000000),
     DEFINE_PROP_END_OF_LIST()
 };
 
