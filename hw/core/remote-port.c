@@ -279,7 +279,7 @@ static void rp_cmd_sync(RemotePort *s, struct rp_pkt *pkt)
     assert(enclen == sizeof s->sync.rsp.sync);
 
     /* We have temporarily disabled blocking syncs into QEMU.  */
-    if (diff <= 0LL || true) {
+    if (diff <= 0LL ) {
         /* We are already a head of time. Respond and issue a sync.  */
         SYNCD(printf("%s: sync resp %lu\n", s->prefix, pkt->sync.timestamp));
         rp_write(s, (void *) &s->sync.rsp, enclen);
