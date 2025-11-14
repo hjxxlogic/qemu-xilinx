@@ -348,10 +348,10 @@ static void sync_timer_hit(void *opaque)
     int64_t clk;
     RemotePortDynPkt rsp;
 
-    fprintf(stderr, "%s: sync_timer_hit called\n", s->prefix);
+    //fprintf(stderr, "%s: sync_timer_hit called\n", s->prefix);
     clk = rp_normalized_vmclk(s);
     if (s->sync.resp_timer_enabled) {
-        fprintf(stderr, "%s: sync while delaying a resp! clk=%lu\n", s->prefix, clk);
+        //fprintf(stderr, "%s: sync while delaying a resp! clk=%lu\n", s->prefix, clk);
         SYNCD(printf("%s: sync while delaying a resp! clk=%lu\n",
                      s->prefix, clk));
         s->sync.need_sync = true;
