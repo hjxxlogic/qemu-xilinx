@@ -37,7 +37,7 @@
 #include "hw/remote-port.h"
 
 #define D(x)
-#define SYNCD(x) x
+#define SYNCD(x) 
 
 #ifndef REMOTE_PORT_ERR_DEBUG
 #define REMOTE_PORT_DEBUG_LEVEL 1
@@ -106,12 +106,12 @@ static void rp_restart_sync_timer_bare(RemotePort *s)
     }
 
     if (s->sync.quantum) {
-        fprintf(stderr, "%s: restarting sync timer with quantum %lu ns\n", s->prefix, s->sync.quantum);
+        //fprintf(stderr, "%s: restarting sync timer with quantum %lu ns\n", s->prefix, s->sync.quantum);
         ptimer_stop(s->sync.ptimer);
         ptimer_set_limit(s->sync.ptimer, s->sync.quantum, 1);
         ptimer_run(s->sync.ptimer, 1);
     } else {
-        fprintf(stderr, "%s: sync quantum is 0, not restarting timer\n", s->prefix);
+        //fprintf(stderr, "%s: sync quantum is 0, not restarting timer\n", s->prefix);
     }
 }
 
@@ -326,10 +326,10 @@ static void rp_say_sync(RemotePort *s, int64_t clk)
     struct rp_pkt_sync pkt;
     size_t len;
 
-    fprintf(stderr, "%s: rp_say_sync called with clk=%lu\n", s->prefix, clk);
+    //fprintf(stderr, "%s: rp_say_sync called with clk=%lu\n", s->prefix, clk);
     len = rp_encode_sync(s->current_id++, 0, &pkt, clk);
     rp_write(s, (void *) &pkt, len);
-    fprintf(stderr, "%s: sync packet sent, len=%zu\n", s->prefix, len);
+    //fprintf(stderr, "%s: sync packet sent, len=%zu\n", s->prefix, len);
 }
 
 static void syncresp_timer_hit(void *opaque)
@@ -360,21 +360,21 @@ static void sync_timer_hit(void *opaque)
     }
 
     /* Sync.  */
-    fprintf(stderr, "%s: starting sync process, clk=%lu\n", s->prefix, clk);
+    //fprintf(stderr, "%s: starting sync process, clk=%lu\n", s->prefix, clk);
     s->doing_sync = true;
     s->sync.need_sync = false;
     qemu_mutex_lock(&s->rsp_mutex);
     /* Send the sync.  */
-    fprintf(stderr, "%s: sending sync packet\n", s->prefix);
+    //fprintf(stderr, "%s: sending sync packet\n", s->prefix);
     rp_say_sync(s, clk);
 
-    SYNCD(printf("%s: syncing wait for resp %lu\n", s->prefix, clk));
+    //SYNCD(printf("%s: syncing wait for resp %lu\n", s->prefix, clk));
     rsp = rp_wait_resp(s);
     rp_dpkt_invalidate(&rsp);
     qemu_mutex_unlock(&s->rsp_mutex);
     s->doing_sync = false;
 
-    fprintf(stderr, "%s: sync completed, restarting timer\n", s->prefix);
+    //fprintf(stderr, "%s: sync completed, restarting timer\n", s->prefix);
     rp_restart_sync_timer_bare(s);
 }
 
