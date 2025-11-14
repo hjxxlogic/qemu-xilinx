@@ -947,7 +947,7 @@ static Property rp_properties[] = {
     DEFINE_PROP_CHR("chardev", RemotePort, chr),
     DEFINE_PROP_STRING("chardesc", RemotePort, chardesc),
     DEFINE_PROP_STRING("chrdev-id", RemotePort, chrdev_id),
-    DEFINE_PROP_BOOL("sync", RemotePort, do_sync, false),
+    DEFINE_PROP_BOOL("sync", RemotePort, do_sync, true),
     DEFINE_PROP_UINT64("sync-quantum", RemotePort, peer.local_cfg.quantum,
                        1000000),
     DEFINE_PROP_END_OF_LIST(),
