@@ -75,9 +75,13 @@ static void rp_pci_init(Object *obj)
     object_unref(OBJECT(s->rp));
 
     /* Set sync properties on the child RemotePort device */
+    fprintf(stderr, "%s: setting sync on child rp: cfg.sync=%d, cfg.sync_quantum=%lu\n", object_get_canonical_path(OBJECT(s)), s->cfg.sync, s->cfg.sync_quantum);
     object_property_set_bool(OBJECT(s->rp), "sync", s->cfg.sync, &error_abort);
     if (s->cfg.sync) {
         object_property_set_uint(OBJECT(s->rp), "sync-quantum", s->cfg.sync_quantum, &error_abort);
+        fprintf(stderr, "%s: sync enabled with quantum %lu on child rp\n", object_get_canonical_path(OBJECT(s)), s->cfg.sync_quantum);
+    } else {
+        fprintf(stderr, "%s: sync disabled on child rp\n", object_get_canonical_path(OBJECT(s)));
     }
 }
 
