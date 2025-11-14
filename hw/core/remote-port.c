@@ -37,10 +37,10 @@
 #include "hw/remote-port.h"
 
 #define D(x)
-#define SYNCD(x)
+#define SYNCD(x) x
 
 #ifndef REMOTE_PORT_ERR_DEBUG
-#define REMOTE_PORT_DEBUG_LEVEL 0
+#define REMOTE_PORT_DEBUG_LEVEL 1
 #else
 #define REMOTE_PORT_DEBUG_LEVEL 1
 #endif
