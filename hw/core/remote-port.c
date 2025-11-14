@@ -101,13 +101,17 @@ int64_t rp_normalized_vmclk(RemotePort *s)
 static void rp_restart_sync_timer_bare(RemotePort *s)
 {
     if (!s->do_sync) {
+        fprintf(stderr, "%s: sync disabled, not restarting timer\n", s->prefix);
         return;
     }
 
     if (s->sync.quantum) {
+        fprintf(stderr, "%s: restarting sync timer with quantum %lu ns\n", s->prefix, s->sync.quantum);
         ptimer_stop(s->sync.ptimer);
         ptimer_set_limit(s->sync.ptimer, s->sync.quantum, 1);
         ptimer_run(s->sync.ptimer, 1);
+    } else {
+        fprintf(stderr, "%s: sync quantum is 0, not restarting timer\n", s->prefix);
     }
 }
 
@@ -322,8 +326,10 @@ static void rp_say_sync(RemotePort *s, int64_t clk)
     struct rp_pkt_sync pkt;
     size_t len;
 
+    fprintf(stderr, "%s: rp_say_sync called with clk=%lu\n", s->prefix, clk);
     len = rp_encode_sync(s->current_id++, 0, &pkt, clk);
     rp_write(s, (void *) &pkt, len);
+    fprintf(stderr, "%s: sync packet sent, len=%zu\n", s->prefix, len);
 }
 
 static void syncresp_timer_hit(void *opaque)
@@ -342,8 +348,10 @@ static void sync_timer_hit(void *opaque)
     int64_t clk;
     RemotePortDynPkt rsp;
 
+    fprintf(stderr, "%s: sync_timer_hit called\n", s->prefix);
     clk = rp_normalized_vmclk(s);
     if (s->sync.resp_timer_enabled) {
+        fprintf(stderr, "%s: sync while delaying a resp! clk=%lu\n", s->prefix, clk);
         SYNCD(printf("%s: sync while delaying a resp! clk=%lu\n",
                      s->prefix, clk));
         s->sync.need_sync = true;
@@ -352,10 +360,12 @@ static void sync_timer_hit(void *opaque)
     }
 
     /* Sync.  */
+    fprintf(stderr, "%s: starting sync process, clk=%lu\n", s->prefix, clk);
     s->doing_sync = true;
     s->sync.need_sync = false;
     qemu_mutex_lock(&s->rsp_mutex);
     /* Send the sync.  */
+    fprintf(stderr, "%s: sending sync packet\n", s->prefix);
     rp_say_sync(s, clk);
 
     SYNCD(printf("%s: syncing wait for resp %lu\n", s->prefix, clk));
@@ -364,6 +374,7 @@ static void sync_timer_hit(void *opaque)
     qemu_mutex_unlock(&s->rsp_mutex);
     s->doing_sync = false;
 
+    fprintf(stderr, "%s: sync completed, restarting timer\n", s->prefix);
     rp_restart_sync_timer_bare(s);
 }
 
@@ -751,6 +762,7 @@ static void rp_reset(DeviceState *dev)
     qemu_thread_create(&s->thread, "remote-port", rp_protocol_thread, s,
                        QEMU_THREAD_JOINABLE);
 
+    fprintf(stderr, "%s: rp_reset calling rp_restart_sync_timer\n", s->prefix);
     rp_restart_sync_timer(s);
     s->reset_done = true;
 }
@@ -885,6 +897,8 @@ static void rp_realize(DeviceState *dev, Error **errp)
        After config negotiation with the peer, sync.quantum value might
        change.  */
     s->sync.quantum = s->peer.local_cfg.quantum;
+
+    fprintf(stderr, "%s: do_sync = %d, sync.quantum = %lu\n", s->prefix, s->do_sync, s->sync.quantum);
 
     s->sync.ptimer = ptimer_init(sync_timer_hit, s, PTIMER_POLICY_LEGACY);
     s->sync.ptimer_resp = ptimer_init(syncresp_timer_hit, s,
